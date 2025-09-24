@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test API</title>
+</head>
+<body>
+    <h1>Test de API</h1>
+    <div id="results"></div>
+
+    <script>
+        async function testAPI() {
+            const results = document.getElementById('results');
+            
+            try {
+                // Test 1: Health check
+                console.log('🔄 Probando health check...');
+                const healthResponse = await fetch('http://localhost:3000/api/health');
+                const healthData = await healthResponse.json();
+                results.innerHTML += '<p>✅ Health check: ' + JSON.stringify(healthData) + '</p>';
+                
+                // Test 2: Transacciones
+                console.log('🔄 Probando transacciones...');
+                const transactionsResponse = await fetch('http://localhost:3000/api/transactions');
+                const transactionsData = await transactionsResponse.json();
+                results.innerHTML += '<p>✅ Transacciones: ' + transactionsData.transactions.length + ' encontradas</p>';
+                
+                // Test 3: Resumen
+                console.log('🔄 Probando resumen...');
+                const summaryResponse = await fetch('http://localhost:3000/api/summary');
+                const summaryData = await summaryResponse.json();
+                results.innerHTML += '<p>✅ Resumen: ' + JSON.stringify(summaryData) + '</p>';
+                
+                // Test 4: Categorías
+                console.log('🔄 Probando categorías...');
+                const categoriesResponse = await fetch('http://localhost:3000/api/categories');
+                const categoriesData = await categoriesResponse.json();
+                results.innerHTML += '<p>✅ Categorías: ' + categoriesData.length + ' encontradas</p>';
+                
+            } catch (error) {
+                console.error('❌ Error:', error);
+                results.innerHTML += '<p>❌ Error: ' + error.message + '</p>';
+            }
+        }
+        
+        // Ejecutar test al cargar la página
+        testAPI();
+    </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "name": "financial-app-backend",
+  "version": "1.0.0",
+  "description": "Backend para aplicación de gestión financiera personal",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "init-db": "node src/scripts/init-db.js"
+  },
+  "keywords": [
+    "finance",
+    "excel",
+    "sqlite",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^9.2.2",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "dotenv": "^17.2.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "form-data": "^4.0.4",
+    "helmet": "^7.1.0",
+    "moment": "^2.29.4",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "openai": "^5.22.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

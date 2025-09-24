@@ -1,0 +1,37 @@
+name: Common Tasks
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'frontend/**'
+      - 'backend/**'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'frontend/**'
+      - 'backend/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate Repository Structure
+      run: |
+        if [ ! -d "frontend" ]; then
+          echo "Frontend directory is missing"
+          exit 1
+        fi
+        if [ ! -d "backend" ]; then
+          echo "Backend directory is missing"
+          exit 1
+        fi
+        if [ ! -f "docker-compose.yml" ]; then
+          echo "docker-compose.yml is missing"
+          exit 1
+        fi
+
+    - name: Check Docker Compose
+      run: docker-compose config
