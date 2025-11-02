@@ -89,31 +89,59 @@ import { TransactionService } from '../../services/transaction.service';
         </div>
 
         <!-- Indicador de detección automática -->
-        <div *ngIf="isDetectingBank" class="card bg-yellow-50 border-yellow-200">
+        <div *ngIf="isDetectingBank" class="card bg-blue-50 border-blue-200">
           <div class="flex items-center">
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             <div>
-              <h3 class="text-lg font-medium text-yellow-900">🔍 Detectando banco automáticamente...</h3>
-              <p class="text-yellow-800 text-sm">Analizando tu archivo CSV para identificar el banco</p>
+              <h3 class="text-lg font-medium text-blue-900">🔍 Detectando banco automáticamente...</h3>
+              <p class="text-blue-800 text-sm">Analizando tu archivo para identificar el banco</p>
             </div>
           </div>
         </div>
 
-        <!-- Selector de banco para CSV -->
+        <!-- Mensaje de detección exitosa -->
+        <div *ngIf="selectedBank && !showBankSelector && !isDetectingBank && selectedFile" class="card bg-green-50 border-green-200">
+          <div class="flex items-center">
+            <svg class="h-5 w-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div>
+              <h3 class="text-sm font-medium text-green-900">✅ Banco detectado automáticamente</h3>
+              <p class="text-green-800 text-xs mt-1">Puedes subir el archivo directamente o cambiar el banco si es necesario</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Selector de banco -->
         <div *ngIf="showBankSelector" class="card bg-blue-50 border-blue-200">
-          <h3 class="text-lg font-medium text-blue-900 mb-4">🔍 Banco no detectado automáticamente</h3>
+          <h3 class="text-lg font-medium text-blue-900 mb-4">Selecciona tu banco</h3>
           <p class="text-blue-800 text-sm mb-4">
-            No pudimos detectar automáticamente tu banco. Por favor, selecciona manualmente de qué banco proviene tu archivo CSV:
+            Por favor, selecciona de qué banco proviene tu archivo para procesarlo correctamente:
           </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div *ngIf="supportedBanks.length === 0" class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <p class="text-yellow-800 text-sm">Cargando bancos disponibles...</p>
+          </div>
+          <div *ngIf="supportedBanks.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <button *ngFor="let bank of supportedBanks" 
                     (click)="selectBank(bank.id)"
-                    class="p-3 text-left border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 cursor-pointer transition-colors">
-              <div class="font-medium text-blue-900">{{ bank.name }}</div>
-              <div class="text-sm text-blue-700">{{ bank.description }}</div>
+                    [class]="selectedBank === bank.id 
+                      ? 'p-3 text-left border-2 border-green-500 bg-green-50 rounded-lg hover:bg-green-100 cursor-pointer transition-colors'
+                      : 'p-3 text-left border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 cursor-pointer transition-colors'">
+              <div class="flex items-center justify-between">
+                <div class="font-medium" [class.text-green-900]="selectedBank === bank.id" [class.text-blue-900]="selectedBank !== bank.id">
+                  {{ bank.name }}
+                </div>
+                <span *ngIf="selectedBank === bank.id" class="text-green-600 text-sm">✓ Seleccionado</span>
+              </div>
+              <div class="text-sm mt-1" [class.text-green-700]="selectedBank === bank.id" [class.text-blue-700]="selectedBank !== bank.id">
+                {{ bank.description }}
+              </div>
+              <div class="text-xs mt-1" [class.text-green-600]="selectedBank === bank.id" [class.text-blue-600]="selectedBank !== bank.id">
+                Formatos: {{ bank.supportedFormats?.join(', ') || 'CSV, Excel' }}
+              </div>
             </button>
           </div>
           <div class="flex justify-end space-x-3 mt-4">
@@ -206,14 +234,34 @@ export class UploadComponent {
   }
 
   loadSupportedBanks(): void {
+    console.log('🔄 Cargando bancos soportados...');
     this.transactionService.getSupportedBanks().subscribe({
       next: (response) => {
+        console.log('📥 Respuesta completa del servidor:', response);
         this.supportedBanks = response.banks || [];
-        console.log('Bancos soportados:', this.supportedBanks);
+        console.log('✅ Bancos soportados cargados:', this.supportedBanks);
+        console.log('📊 Total de bancos:', this.supportedBanks.length);
+        this.supportedBanks.forEach((bank, index) => {
+          console.log(`  ${index + 1}. ${bank.name} (${bank.id})`);
+        });
+        
+        if (this.supportedBanks.length === 0) {
+          console.warn('⚠️ No se encontraron bancos soportados');
+          this.uploadError = 'No hay bancos disponibles. Por favor, verifica que el servidor esté ejecutándose correctamente.';
+        } else if (this.supportedBanks.length === 1) {
+          console.warn('⚠️ Solo se encontró 1 banco, deberían ser 2');
+        }
       },
       error: (error) => {
-        console.error('Error cargando bancos soportados:', error);
-        this.uploadError = 'Error cargando lista de bancos';
+        console.error('❌ Error cargando bancos soportados:', error);
+        console.error('❌ Detalles del error:', {
+          status: error.status,
+          statusText: error.statusText,
+          message: error.message,
+          error: error.error
+        });
+        this.uploadError = `Error cargando lista de bancos: ${error.message || 'Error desconocido'}`;
+        this.supportedBanks = [];
       }
     });
   }
@@ -281,6 +329,46 @@ export class UploadComponent {
     this.selectedBank = ''; // Reset bank selection when new file is selected
     
     console.log('Archivo validado correctamente:', file.name);
+    
+    // Intentar detectar el banco automáticamente
+    this.detectBankAutomatically(file);
+  }
+
+  detectBankAutomatically(file: File): void {
+    console.log('🔍 Detectando banco automáticamente...');
+    this.isDetectingBank = true;
+    
+    this.transactionService.detectBank(file).subscribe({
+      next: (result) => {
+        this.isDetectingBank = false;
+        console.log('📊 Resultado de detección:', result);
+        
+        if (result.detected && result.bankId && result.confidence && result.confidence >= 0.5) {
+          console.log(`✅ Banco detectado: ${result.bankName} (${(result.confidence * 100).toFixed(1)}% confianza)`);
+          this.selectedBank = result.bankId;
+          
+          // Si la confianza es alta (>= 0.8), mostrar mensaje pero continuar automáticamente
+          if (result.confidence >= 0.8) {
+            console.log('✅ Alta confianza - banco seleccionado automáticamente');
+            // El banco ya está seleccionado, el usuario puede subir directamente
+          } else {
+            // Confianza media - mostrar selector pero preseleccionado
+            console.log('⚠️ Confianza media - mostrar selector con banco preseleccionado');
+            this.showBankSelector = true;
+          }
+        } else {
+          console.log('❌ No se pudo detectar el banco automáticamente');
+          // Mostrar selector para que el usuario elija manualmente
+          this.showBankSelector = true;
+        }
+      },
+      error: (error) => {
+        this.isDetectingBank = false;
+        console.error('❌ Error detectando banco:', error);
+        // Si falla la detección, mostrar selector manual
+        this.showBankSelector = true;
+      }
+    });
   }
 
   removeFile(): void {
@@ -292,17 +380,19 @@ export class UploadComponent {
   uploadFile(): void {
     if (!this.selectedFile) return;
 
-    const fileExtension = this.selectedFile.name.split('.').pop()?.toLowerCase();
-    
-    if (fileExtension === 'csv') {
-      // Para archivos CSV, mostrar selector de banco
-      if (!this.selectedBank) {
-        this.showBankSelector = true;
+    // Si no hay banco seleccionado, mostrar selector
+    if (!this.selectedBank) {
+      // Verificar que tenemos bancos cargados
+      if (this.supportedBanks.length === 0) {
+        this.uploadError = 'No hay bancos disponibles. Por favor, recarga la página.';
+        console.error('No hay bancos soportados disponibles');
         return;
       }
+      this.showBankSelector = true;
+      return;
     }
 
-    // Si ya tiene banco seleccionado o es Excel, proceder directamente
+    // Si ya tiene banco seleccionado, proceder directamente
     this.continueUpload();
   }
 
@@ -318,6 +408,12 @@ export class UploadComponent {
       return;
     }
 
+    if (!this.selectedBank) {
+      this.uploadError = 'Por favor, selecciona un banco antes de continuar';
+      console.error('No se ha seleccionado un banco');
+      return;
+    }
+
     console.log('Iniciando subida de archivo:', this.selectedFile.name);
     console.log('Banco seleccionado:', this.selectedBank);
 
@@ -325,7 +421,7 @@ export class UploadComponent {
     this.uploadError = null;
     this.uploadResult = null;
 
-    this.transactionService.uploadFile(this.selectedFile, this.selectedBank || undefined).subscribe({
+    this.transactionService.uploadFile(this.selectedFile, this.selectedBank).subscribe({
       next: (result) => {
         this.uploadResult = result;
         this.isUploading = false;
@@ -334,7 +430,8 @@ export class UploadComponent {
         this.selectedFile = null;
       },
       error: (error) => {
-        this.uploadError = error.error?.message || 'Error al subir el archivo';
+        console.error('Error al subir archivo:', error);
+        this.uploadError = error.error?.message || error.error?.error || 'Error al subir el archivo';
         this.isUploading = false;
         this.showBankSelector = false;
       }

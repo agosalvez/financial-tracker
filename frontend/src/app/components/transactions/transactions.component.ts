@@ -1,9 +1,11 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TransactionService } from '../../services/transaction.service';
+import { AccountService } from '../../services/account.service';
 import { Transaction, TransactionFilters } from '../../models/transaction.model';
 import { MonthSelectorComponent } from '../shared/month-selector.component';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-transactions',
@@ -11,24 +13,69 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
   imports: [CommonModule, FormsModule, MonthSelectorComponent],
   template: `
     <div class="space-y-6">
+      <!-- Mensaje si no hay cuenta seleccionada -->
+      <div *ngIf="!selectedAccount" class="card bg-yellow-50 border-yellow-200 mb-6">
+        <div class="flex items-center space-x-3">
+          <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+          </svg>
+          <div>
+            <h3 class="text-sm font-medium text-yellow-900">Selecciona una cuenta</h3>
+            <p class="text-sm text-yellow-800 mt-1">Por favor, selecciona una cuenta desde el menú superior para ver sus transacciones.</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Header -->
-      <div class="flex justify-between items-center">
+      <div class="flex justify-between items-center" *ngIf="selectedAccount">
         <div class="flex items-center space-x-6">
-          <h1 class="text-3xl font-bold text-gray-900">Movimientos</h1>
+          <h1 class="text-3xl font-bold text-gray-900">
+            Movimientos - {{ selectedAccount }}
+          </h1>
           <app-month-selector 
             [currentDate]="selectedMonth"
             (monthChange)="onMonthChange($event)">
           </app-month-selector>
         </div>
-        <div class="text-sm text-gray-500">
-          {{ transactions.length }} movimientos encontrados
+        <div class="flex items-center space-x-4">
+          <div class="text-sm text-gray-500">
+            {{ transactions.length }} movimientos encontrados
+            <span class="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
+              {{ selectedAccount }}
+            </span>
+          </div>
+          <!-- Modo Edición -->
+          <label class="flex items-center space-x-2 cursor-pointer text-sm text-gray-600 hover:text-gray-900 transition-colors">
+            <span class="text-xs">✏️ Modo Edición:</span>
+            <input type="checkbox" 
+                   [(ngModel)]="editMode"
+                   class="sr-only peer">
+            <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-500 relative"></div>
+            <span class="text-xs font-medium text-gray-700">
+              {{ editMode ? 'ON' : 'OFF' }}
+            </span>
+          </label>
         </div>
       </div>
 
       <!-- Filtros -->
       <div class="card">
         <h3 class="text-lg font-medium text-gray-900 mb-4">Filtros</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4" *ngIf="selectedAccount">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Selección rápida</label>
+            <div class="flex items-center h-[42px]">
+              <input type="checkbox" 
+                     id="fullYearCheck"
+                     [checked]="isFullYearSelected"
+                     (change)="toggleFullYear()"
+                     class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer">
+              <label for="fullYearCheck" 
+                     class="ml-2 text-sm font-medium text-gray-700 cursor-pointer">
+                📅 Año completo
+              </label>
+            </div>
+          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Fecha desde</label>
             <input type="date" 
@@ -57,8 +104,21 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
               </option>
             </select>
           </div>
+          <!-- Botones en línea (ocultos en móviles, visibles en desktop) -->
+          <div class="hidden lg:block col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-1">&nbsp;</label>
+            <div class="flex space-x-2 w-full">
+              <button (click)="clearFilters()" class="btn-secondary cursor-pointer text-sm py-2 flex-1">
+                Limpiar
+              </button>
+              <button (click)="applyFilters()" class="btn-primary cursor-pointer text-sm py-2 flex-1">
+                Aplicar Filtros
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="flex justify-end space-x-2 mt-4">
+        <!-- Botones debajo (visibles en móviles, ocultos en desktop) -->
+        <div class="flex justify-end space-x-2 mt-4 lg:hidden" *ngIf="selectedAccount">
           <button (click)="clearFilters()" class="btn-secondary cursor-pointer">
             Limpiar
           </button>
@@ -115,7 +175,7 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
         </div>
 
         <!-- Vista de Lista -->
-        <div *ngIf="activeTab === 'list'" class="mt-4">
+        <div *ngIf="activeTab === 'list' && selectedAccount" class="mt-4">
           <!-- Selector de elementos por página -->
           <div class="flex justify-end mb-4">
             <div class="flex items-center space-x-2">
@@ -131,7 +191,7 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
             </div>
           </div>
           <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
+            <table class="w-full divide-y divide-gray-200" style="min-width: 1200px;">
               <thead class="bg-gray-50">
                 <tr>
                   <th (click)="sortBy('fecha')" 
@@ -199,6 +259,7 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
                       </span>
                     </div>
                   </th>
+                  <th class="table-header">Banco</th>
                   <th class="table-header">Acciones</th>
                 </tr>
               </thead>
@@ -212,7 +273,7 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
                     </div>
                   </td>
                   <td class="table-cell">
-                    <div class="max-w-xs truncate" [title]="transaction.concepto">
+                    <div class="max-w-2xl truncate" [title]="transaction.concepto">
                       {{ transaction.concepto }}
                     </div>
                   </td>
@@ -255,17 +316,43 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
                     </div>
                   </td>
                   <td class="table-cell">
-                    <div class="flex items-center space-x-2">
-                      <button (click)="editCategory(transaction)" 
-                              class="text-primary-600 hover:text-primary-900 text-sm font-medium cursor-pointer">
-                        Editar
+                    <span *ngIf="transaction?.banco" 
+                          class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                      {{ transaction.banco }}
+                    </span>
+                    <span *ngIf="!transaction?.banco" 
+                          class="text-gray-400 text-xs">
+                      -
+                    </span>
+                  </td>
+                  <td class="table-cell">
+                    <div class="flex items-center">
+                      <button type="button"
+                              *ngIf="editMode"
+                              (click)="editCategory(transaction)" 
+                              class="text-primary-600 hover:text-primary-900 text-lg cursor-pointer p-1 hover:bg-primary-50 rounded transition-colors"
+                              title="Editar categoría">
+                        ✏️
                       </button>
-                      <button *ngIf="transaction?.categoria && !transaction.isValidated"
+                      <span *ngIf="editMode" class="w-8"></span>
+                      <button type="button"
+                              *ngIf="transaction?.categoria && !transaction.isValidated"
                               (click)="validateCategory(transaction)"
                               class="flex items-center space-x-1 text-yellow-600 hover:text-yellow-800 text-sm font-medium cursor-pointer bg-yellow-50 px-2 py-1 rounded">
                         <span>⚠️</span>
                         <span>Validar</span>
                       </button>
+                      <button type="button"
+                              *ngIf="editMode"
+                              (click)="confirmDeleteTransaction(transaction); $event.stopPropagation()" 
+                              class="text-red-600 hover:text-red-800 text-lg cursor-pointer p-1 hover:bg-red-50 rounded transition-colors ml-auto"
+                              title="Eliminar transacción">
+                        🗑️
+                      </button>
+                      <span *ngIf="!editMode && (!transaction?.categoria || transaction.isValidated)" 
+                            class="text-xs text-gray-400 italic">
+                        Activa modo edición
+                      </span>
                     </div>
                   </td>
                 </tr>
@@ -275,7 +362,7 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
         </div>
 
         <!-- Vista de Ranking -->
-        <div *ngIf="activeTab === 'ranking'" class="mt-4 space-y-8">
+        <div *ngIf="activeTab === 'ranking' && selectedAccount" class="mt-4 space-y-8">
           <!-- Ranking de Gastos -->
           <div class="card">
             <h3 class="text-lg font-medium text-danger-900 mb-4">Top 5 Gastos</h3>
@@ -369,7 +456,8 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
 
     <!-- Modal para editar categoría -->
     <div *ngIf="showEditModal" 
-         class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+         class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+         style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;">
       <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
         <div class="mt-3">
           <h3 class="text-lg font-medium text-gray-900 mb-4">
@@ -401,17 +489,71 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
           </div>
 
           <div class="flex justify-between space-x-2">
-            <button (click)="suggestCategory()" 
+            <button type="button"
+                    (click)="suggestCategory()" 
                     class="btn-secondary flex items-center space-x-1 cursor-pointer">
               <span>🤖</span>
               <span>Sugerir con IA</span>
             </button>
             <div class="flex space-x-2">
-              <button (click)="cancelEdit()" class="btn-secondary cursor-pointer">
+              <button type="button"
+                      (click)="cancelEdit()" 
+                      class="btn-secondary cursor-pointer">
                 Cancelar
               </button>
-              <button (click)="saveCategory()" class="btn-primary cursor-pointer">
+              <button type="button"
+                      (click)="saveCategory()" 
+                      class="btn-primary cursor-pointer">
                 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de Confirmación de Eliminación -->
+    <div *ngIf="showDeleteModal" 
+         class="fixed inset-0 bg-gray-600 bg-opacity-50 z-[9999] flex items-center justify-center"
+         (click)="cancelDelete()"
+         style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999;">
+      <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4"
+           (click)="$event.stopPropagation()"
+           style="z-index: 10000; position: relative;">
+        <div>
+          <div class="flex items-center justify-center w-12 h-12 mx-auto bg-red-100 rounded-full mb-4">
+            <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+          </div>
+          <h3 class="text-lg font-medium text-gray-900 text-center mb-2">
+            ¿Eliminar transacción?
+          </h3>
+          <div class="mt-2">
+            <p class="text-sm text-gray-500 text-center mb-4">
+              Esta acción no se puede deshacer. ¿Estás seguro de que deseas eliminar esta transacción?
+            </p>
+            <div *ngIf="transactionToDelete" class="bg-gray-50 rounded-lg p-3 mb-4">
+              <p class="text-sm font-medium text-gray-900">
+                {{ transactionToDelete.concepto }}
+              </p>
+              <p class="text-xs text-gray-600 mt-1">
+                {{ transactionToDelete.fecha | date:'dd/MM/yyyy' }} - 
+                <span [class]="transactionToDelete.importe >= 0 ? 'text-green-600' : 'text-red-600'">
+                  {{ transactionToDelete.importe | currency:'EUR':'symbol':'1.2-2':'es' }}
+                </span>
+              </p>
+            </div>
+            <div class="flex space-x-3 justify-center">
+              <button type="button"
+                      (click)="cancelDelete()" 
+                      class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 text-sm font-medium cursor-pointer">
+                Cancelar
+              </button>
+              <button type="button"
+                      (click)="deleteTransaction()" 
+                      class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm font-medium cursor-pointer">
+                Sí, eliminar
               </button>
             </div>
           </div>
@@ -421,12 +563,16 @@ import { MonthSelectorComponent } from '../shared/month-selector.component';
   `,
   styles: []
 })
-export class TransactionsComponent implements OnInit {
+export class TransactionsComponent implements OnInit, OnDestroy {
   transactions: (Transaction & { isValidated?: boolean })[] = [];
   categories: any[] = [];
+  selectedAccount: string | null = null; // Cuenta seleccionada desde servicio global
   filters: TransactionFilters = {};
   selectedMonth: Date;
   validatedConcepts: Set<string> = new Set();
+  isFullYearSelected: boolean = false;
+  editMode: boolean = false; // Modo edición para mostrar opciones de eliminación
+  private subscriptions = new Subscription();
 
   // Ordenación
   sortColumn: string = 'fecha';
@@ -455,6 +601,10 @@ export class TransactionsComponent implements OnInit {
     notas: ''
   };
 
+  // Modal de confirmación de eliminación
+  showDeleteModal = false;
+  transactionToDelete: Transaction | null = null;
+
   // Sugerencia de IA
   aiSuggestion: {
     category_id: number;
@@ -463,7 +613,10 @@ export class TransactionsComponent implements OnInit {
     explanation: string;
   } | null = null;
 
-  constructor(private transactionService: TransactionService) {
+  constructor(
+    private transactionService: TransactionService,
+    private accountService: AccountService
+  ) {
     // Inicializar propiedades
     this.transactions = [];
     this.categories = [];
@@ -481,10 +634,38 @@ export class TransactionsComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    // Inicializar con el mes actual
+    // Obtener cuenta seleccionada actual
+    this.selectedAccount = this.accountService.getSelectedAccount();
+    if (this.selectedAccount) {
+      this.filters.banco = this.selectedAccount;
+    }
+
+    // Suscribirse a cambios en la cuenta seleccionada
+    this.subscriptions.add(
+      this.accountService.selectedAccount$.subscribe(account => {
+        console.log('🔄 Cambio de cuenta detectado:', account);
+        this.selectedAccount = account;
+        if (account) {
+          this.filters.banco = account;
+          console.log('📝 Aplicando filtro de banco:', account);
+          // Resetear página y recargar
+          this.currentPage = 1;
+          this.loadTransactions();
+        } else {
+          this.filters.banco = undefined;
+          this.transactions = [];
+        }
+      })
+    );
+
+    // Inicializar con el mes actual (esto también cargará las transacciones)
     this.loadValidatedConcepts();
     this.onMonthChange(this.selectedMonth);
     this.loadCategories();
+  }
+
+  ngOnDestroy(): void {
+    this.subscriptions.unsubscribe();
   }
 
   loadValidatedConcepts(): void {
@@ -533,6 +714,9 @@ export class TransactionsComponent implements OnInit {
   onMonthChange(date: Date): void {
     this.selectedMonth = date;
     
+    // Desactivar el checkbox de año completo al cambiar el mes
+    this.isFullYearSelected = false;
+    
     // Formatear el primer día del mes (siempre 01)
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const startStr = `${date.getFullYear()}-${month}-01`;
@@ -541,23 +725,23 @@ export class TransactionsComponent implements OnInit {
     const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
     const endStr = `${date.getFullYear()}-${month}-${lastDay}`;
     
-    // Actualizar los filtros
+    // Actualizar los filtros, pero mantener el banco seleccionado
     this.filters = {
-      ...this.filters,  // Mantener otros filtros
+      ...this.filters,  // Mantener otros filtros (incluyendo banco)
       fechaDesde: startStr,
       fechaHasta: endStr
     };
-    
-    console.log('Filtros actualizados:', {
-      mes: date.toLocaleString('es-ES', { month: 'long', year: 'numeric' }),
-      desde: startStr,  // Debería ser YYYY-MM-01
-      hasta: endStr     // Debería ser YYYY-MM-31 (o 30, 28, 29 según el mes)
-    });
 
-    console.log('Fechas actualizadas:', {
+    // Asegurarse de que el banco esté en los filtros si hay uno seleccionado
+    if (this.selectedAccount && !this.filters.banco) {
+      this.filters.banco = this.selectedAccount;
+    }
+    
+    console.log('📅 Mes cambiado, filtros actualizados:', {
       mes: date.toLocaleString('es-ES', { month: 'long', year: 'numeric' }),
       desde: startStr,
-      hasta: endStr
+      hasta: endStr,
+      banco: this.filters.banco
     });
 
     this.currentPage = 1; // Resetear la paginación
@@ -580,7 +764,25 @@ export class TransactionsComponent implements OnInit {
   }
 
   loadTransactions(): void {
-    console.log('🔄 Cargando transacciones...', this.filters);
+    // Si no hay cuenta seleccionada, no cargar transacciones
+    if (!this.selectedAccount) {
+      console.log('⚠️ No hay cuenta seleccionada, no se cargan transacciones');
+      this.transactions = [];
+      return;
+    }
+
+    // Asegurarse de que el filtro de banco esté aplicado
+    if (!this.filters.banco || this.filters.banco !== this.selectedAccount) {
+      this.filters.banco = this.selectedAccount;
+      console.log('📝 Asegurando filtro de banco:', this.selectedAccount);
+    }
+
+    console.log('🔄 Cargando transacciones...', {
+      banco: this.filters.banco,
+      fechaDesde: this.filters.fechaDesde,
+      fechaHasta: this.filters.fechaHasta,
+      otrosFiltros: this.filters
+    });
     
     // Agregar parámetros de paginación y ordenación a los filtros
     const filtersWithPagination = {
@@ -591,11 +793,15 @@ export class TransactionsComponent implements OnInit {
       sortDirection: this.sortDirection
     };
     
-    console.log('Enviando filtros con ordenación:', filtersWithPagination);
+    console.log('📤 Enviando filtros completos:', filtersWithPagination);
     
     this.transactionService.getTransactions(filtersWithPagination).subscribe({
       next: (response) => {
-        console.log('✅ Transacciones cargadas:', response);
+        console.log('✅ Transacciones cargadas:', {
+          total: response.pagination.total,
+          count: response.transactions.length,
+          banco: this.filters.banco
+        });
         this.transactions = response.transactions;
         this.updateTransactionsValidationStatus();
         this.totalTransactions = response.pagination.total;
@@ -621,6 +827,7 @@ export class TransactionsComponent implements OnInit {
     });
   }
 
+
   applyFilters(): void {
     // Limpiar espacios en blanco de los filtros de texto
     if (this.filters.categoria) {
@@ -635,12 +842,33 @@ export class TransactionsComponent implements OnInit {
   }
 
   clearFilters(): void {
-    // Limpiar todos los filtros excepto las fechas
+    // Limpiar todos los filtros excepto las fechas del mes seleccionado
     const { fechaDesde, fechaHasta } = this.filters;
     this.filters = { fechaDesde, fechaHasta };
     
     this.currentPage = 1;
     this.loadTransactions();
+  }
+
+  selectFullYear(): void {
+    const currentYear = new Date().getFullYear();
+    // Establecer desde el 1 de enero hasta el 31 de diciembre del año actual
+    this.filters.fechaDesde = `${currentYear}-01-01`;
+    this.filters.fechaHasta = `${currentYear}-12-31`;
+    
+    // Aplicar filtros automáticamente
+    this.currentPage = 1;
+    this.loadTransactions();
+  }
+
+  toggleFullYear(): void {
+    this.isFullYearSelected = !this.isFullYearSelected;
+    if (this.isFullYearSelected) {
+      this.selectFullYear();
+    } else {
+      // Restaurar las fechas del mes seleccionado
+      this.onMonthChange(this.selectedMonth);
+    }
   }
 
   previousPage(): void {
@@ -712,14 +940,79 @@ export class TransactionsComponent implements OnInit {
     };
   }
 
+  confirmDeleteTransaction(transaction: Transaction): void {
+    console.log('🗑️ Confirmando eliminación de transacción:', transaction);
+    console.log('🔍 Estado antes:', { showDeleteModal: this.showDeleteModal, transactionToDelete: this.transactionToDelete });
+    
+    this.transactionToDelete = transaction;
+    this.showDeleteModal = true;
+    
+    console.log('✅ Estado después:', { showDeleteModal: this.showDeleteModal, transactionToDelete: this.transactionToDelete });
+    
+    // Forzar detección de cambios (útil en desarrollo)
+    setTimeout(() => {
+      console.log('⏱️ Estado después de timeout:', { showDeleteModal: this.showDeleteModal });
+    }, 100);
+  }
+
+  cancelDelete(): void {
+    this.showDeleteModal = false;
+    this.transactionToDelete = null;
+  }
+
+  deleteTransaction(): void {
+    if (!this.transactionToDelete || !this.transactionToDelete.id) {
+      return;
+    }
+
+    const transactionId = this.transactionToDelete.id;
+    console.log('🗑️ Eliminando transacción:', transactionId);
+
+    this.transactionService.deleteTransaction(transactionId).subscribe({
+      next: (response) => {
+        console.log('✅ Transacción eliminada:', response.message);
+        // Remover la transacción de la lista
+        this.transactions = this.transactions.filter(t => t.id !== transactionId);
+        this.updateTransactionsValidationStatus();
+        // Actualizar contador de totales
+        this.totalTransactions = Math.max(0, this.totalTransactions - 1);
+        // Recalcular totalPages si es necesario
+        this.totalPages = Math.ceil(this.totalTransactions / this.pageSize);
+        // Si la página actual quedó vacía, ir a la anterior
+        if (this.currentPage > this.totalPages && this.totalPages > 0) {
+          this.currentPage = this.totalPages;
+        }
+        // Cerrar modal
+        this.showDeleteModal = false;
+        this.transactionToDelete = null;
+        
+        // Si quedan transacciones en la página actual, recargar para asegurar consistencia
+        if (this.transactions.length > 0) {
+          this.loadTransactions();
+        }
+      },
+      error: (error) => {
+        console.error('❌ Error al eliminar transacción:', error);
+        alert('Error al eliminar la transacción. Por favor, intenta de nuevo.');
+      }
+    });
+  }
+
   saveCategory(): void {
-    if (!this.editingTransaction.id) return;
+    if (!this.editingTransaction.id) {
+      console.error('No hay transacción seleccionada para editar');
+      return;
+    }
+
+    console.log('Actualizando categoría de transacción:', this.editingTransaction.id);
+    console.log('Nueva categoría:', this.editingTransaction.categoria);
 
     this.transactionService.updateTransactionCategory(
       this.editingTransaction.id,
       this.editingTransaction.categoria || ''
     ).subscribe({
       next: (response) => {
+        console.log('Respuesta del servidor:', response);
         this.showEditModal = false;
         this.editingTransaction = {
           id: 0,
@@ -740,6 +1033,12 @@ export class TransactionsComponent implements OnInit {
       },
       error: (error) => {
         console.error('Error al actualizar categoría:', error);
+        console.error('Detalles del error:', {
+          status: error.status,
+          statusText: error.statusText,
+          url: error.url,
+          message: error.message
+        });
       }
     });
   }

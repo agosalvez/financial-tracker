@@ -100,6 +100,69 @@ router.get('/validated-concepts', (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/transactions/banks:
+ *   get:
+ *     summary: Obtener lista de bancos/cuentas únicos con estadísticas
+ *     description: Obtiene todos los bancos distintos con información sobre transacciones
+ *     tags: [Transacciones]
+ *     responses:
+ *       200:
+ *         description: Lista de bancos con estadísticas
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 banks:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       nombre:
+ *                         type: string
+ *                       totalTransacciones:
+ *                         type: integer
+ *                       totalIngresos:
+ *                         type: number
+ *                       totalGastos:
+ *                         type: number
+ *                       balance:
+ *                         type: number
+ *                       primeraTransaccion:
+ *                         type: string
+ *                         format: date
+ *                       ultimaTransaccion:
+ *                         type: string
+ *                         format: date
+ */
+router.get('/banks', (req, res) => {
+  try {
+    const db = getDatabase();
+    
+    const banks = db.prepare(`
+      SELECT 
+        banco as nombre,
+        COUNT(*) as totalTransacciones,
+        SUM(CASE WHEN importe > 0 THEN importe ELSE 0 END) as totalIngresos,
+        SUM(CASE WHEN importe < 0 THEN ABS(importe) ELSE 0 END) as totalGastos,
+        SUM(importe) as balance,
+        MIN(fecha) as primeraTransaccion,
+        MAX(fecha) as ultimaTransaccion
+      FROM transactions
+      WHERE banco IS NOT NULL AND banco != ''
+      GROUP BY banco
+      ORDER BY banco
+    `).all();
+
+    res.json({ banks });
+  } catch (error) {
+    console.error('Error al obtener bancos:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 router.get('/', (req, res) => {
   try {
     const db = getDatabase();
@@ -108,6 +171,7 @@ router.get('/', (req, res) => {
       fechaHasta, 
       concepto, 
       categoria, 
+      banco, // Nuevo filtro por banco
       importeMin, 
       importeMax,
       page = 1,
@@ -121,6 +185,7 @@ router.get('/', (req, res) => {
       fechaHasta,
       concepto,
       categoria,
+      banco,
       importeMin,
       importeMax,
       page,
@@ -153,14 +218,23 @@ router.get('/', (req, res) => {
       params.push(categoria);
     }
 
-    if (importeMin !== undefined) {
-      whereConditions.push('importe >= ?');
-      params.push(parseFloat(importeMin));
+    // Filtro por banco/cuenta
+    if (banco && banco.trim() !== '') {
+      whereConditions.push('banco = ?');
+      params.push(banco.trim());
+      console.log('Añadiendo filtro banco:', banco);
     }
 
-    if (importeMax !== undefined) {
+    if (importeMin !== undefined && importeMin !== null && importeMin !== '') {
+      whereConditions.push('importe >= ?');
+      params.push(parseFloat(importeMin));
+      console.log('Añadiendo filtro importeMin:', importeMin);
+    }
+
+    if (importeMax !== undefined && importeMax !== null && importeMax !== '') {
       whereConditions.push('importe <= ?');
       params.push(parseFloat(importeMax));
+      console.log('Añadiendo filtro importeMax:', importeMax);
     }
 
     const whereClause = whereConditions.length > 0 
@@ -262,7 +336,7 @@ router.get('/:id', (req, res) => {
 /**
  * @swagger
  * /api/transactions/{id}:
- *   patch:
+ *   put:
  *     summary: Actualizar una transacción
  *     description: Actualiza los datos de una transacción existente
  *     tags: [Transacciones]
@@ -300,7 +374,7 @@ router.get('/:id', (req, res) => {
  *       500:
  *         description: Error interno del servidor
  */
-router.patch('/:id', (req, res) => {
+router.put('/:id', (req, res) => {
   try {
     const db = getDatabase();
     const { id } = req.params;

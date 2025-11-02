@@ -26,11 +26,20 @@ async function processFile(file, bankId, insertStatement, db) {
   }
 
   let parseResult;
-  if (fileExtension === '.csv') {
-    // Parsear archivo CSV
+  
+  // Usar el parser específico del banco si está disponible y soporta el formato
+  const parser = parserManager.getParserByBankId(bankId);
+  if (parser && parser.supportsFileFormat(file.path)) {
+    // Usar el parser específico del banco (soporta CSV y Excel según el parser)
+    console.log(`🔄 Usando parser específico de ${parser.bankName} para procesar ${fileExtension}`);
+    parseResult = await parserManager.parseFile(file.path, bankId);
+  } else if (fileExtension === '.csv') {
+    // Fallback: Parsear archivo CSV genérico si no hay parser específico
+    console.log('⚠️ Usando parser genérico para CSV');
     parseResult = await parserManager.parseFile(file.path, bankId);
   } else {
-    // Parsear archivo Excel
+    // Fallback: Parsear archivo Excel genérico si no hay parser específico
+    console.log('⚠️ Usando parser genérico para Excel');
     const workbook = XLSX.readFile(file.path);
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
@@ -65,31 +74,158 @@ async function processFile(file, bankId, insertStatement, db) {
 
   console.log(`\n🚀 Iniciando importación de ${totalTransactions} transacciones...\n`);
 
-  // Procesar transacciones
+  // Paso 1: Identificar conceptos únicos en el archivo
+  const uniqueConcepts = new Map();
+  for (const transaction of parseResult.transactions) {
+    if (!transaction.concepto) continue;
+    
+    const conceptoKey = transaction.concepto.trim().toLowerCase();
+    if (!uniqueConcepts.has(conceptoKey)) {
+      uniqueConcepts.set(conceptoKey, {
+        concepto: transaction.concepto,
+        importe: transaction.importe, // Tomamos el primer importe como referencia
+        count: 0
+      });
+    }
+    uniqueConcepts.get(conceptoKey).count++;
+  }
+
+  console.log(`\n📊 Conceptos únicos encontrados: ${uniqueConcepts.size}`);
+  
+  // Paso 2: Verificar qué conceptos ya están categorizados en la BD
+  const conceptCategories = new Map(); // Mapa de concepto -> categoría
+  const newConcepts = [];
+  
+  for (const [conceptoKey, conceptData] of uniqueConcepts.entries()) {
+    // Verificar si ya está categorizado
+    const savedCategorization = db.prepare(`
+      SELECT cc.*, c.nombre as category_name, c.tipo as category_type
+      FROM concept_categories cc
+      JOIN categories c ON c.id = cc.category_id
+      WHERE LOWER(TRIM(cc.concepto)) = ?
+      AND (
+        (? > 0 AND c.tipo = 'ingreso') OR 
+        (? < 0 AND c.tipo = 'gasto')
+      )
+      ORDER BY cc.confidence DESC, cc.created_at DESC
+      LIMIT 1
+    `).get(conceptoKey, conceptData.importe, conceptData.importe);
+
+    if (savedCategorization) {
+      // Ya existe en BD, usar esa categoría
+      conceptCategories.set(conceptoKey, {
+        category_id: savedCategorization.category_id,
+        category_name: savedCategorization.category_name,
+        category_type: savedCategorization.category_type,
+        confidence: savedCategorization.confidence,
+        source: 'database'
+      });
+      console.log(`  ✅ Concepto conocido: "${conceptData.concepto}" -> ${savedCategorization.category_name}`);
+    } else {
+      // Es un concepto nuevo, añadirlo a la lista para categorizar con IA
+      newConcepts.push(conceptData);
+      console.log(`  🆕 Concepto nuevo: "${conceptData.concepto}" (${conceptData.count} veces)`);
+    }
+  }
+
+  // Paso 3: Categorizar conceptos nuevos con OpenAI
+  let openAICallsCount = 0; // Contador de llamadas a OpenAI
+  if (newConcepts.length > 0) {
+    console.log(`\n🤖 Categorizando ${newConcepts.length} conceptos nuevos con OpenAI...\n`);
+    
+    for (const conceptData of newConcepts) {
+      try {
+        console.log(`🤖 Analizando: "${conceptData.concepto}"`);
+        const categorization = await categorizeTransaction(conceptData.concepto, conceptData.importe);
+        
+        // Incrementar contador solo si se hizo una llamada real a OpenAI (source: 'ai')
+        if (categorization.source === 'ai') {
+          openAICallsCount++;
+        }
+        
+        // Obtener nombre de la categoría
+        const category = db.prepare('SELECT nombre, tipo FROM categories WHERE id = ?').get(categorization.category_id);
+        
+        if (category) {
+          conceptCategories.set(conceptData.concepto.trim().toLowerCase(), {
+            category_id: categorization.category_id,
+            category_name: category.nombre,
+            category_type: category.tipo,
+            confidence: categorization.confidence || 0.5,
+            source: categorization.source || 'ai'
+          });
+          console.log(`  ✅ Categorizado: "${conceptData.concepto}" -> ${category.nombre} (confianza: ${((categorization.confidence || 0.5) * 100).toFixed(1)}%)`);
+        } else {
+          // Fallback a "Otros"
+          const otrosCategory = db.prepare('SELECT id, nombre, tipo FROM categories WHERE nombre = ?').get('Otros');
+          if (otrosCategory) {
+            conceptCategories.set(conceptData.concepto.trim().toLowerCase(), {
+              category_id: otrosCategory.id,
+              category_name: otrosCategory.nombre,
+              category_type: otrosCategory.tipo,
+              confidence: 0.5,
+              source: 'fallback'
+            });
+            console.log(`  ⚠️ Usando categoría "Otros" para: "${conceptData.concepto}"`);
+          }
+        }
+        
+        // Pausa para evitar rate limits
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error(`  ❌ Error categorizando "${conceptData.concepto}":`, error.message);
+        // Fallback a "Otros"
+        const otrosCategory = db.prepare('SELECT id, nombre, tipo FROM categories WHERE nombre = ?').get('Otros');
+        if (otrosCategory) {
+          conceptCategories.set(conceptData.concepto.trim().toLowerCase(), {
+            category_id: otrosCategory.id,
+            category_name: otrosCategory.nombre,
+            category_type: otrosCategory.tipo,
+            confidence: 0.5,
+            source: 'fallback'
+          });
+        }
+      }
+    }
+  }
+
+  // Paso 4: Procesar todas las transacciones usando las categorías ya determinadas
+  console.log(`\n💾 Insertando ${totalTransactions} transacciones en la base de datos...\n`);
+
   for (const [index, transaction] of parseResult.transactions.entries()) {
     const currentNumber = index + 1;
-    console.log(`\n[${currentNumber}/${totalTransactions}] Procesando: ${transaction.concepto}`);
+    if (index % 10 === 0 || index === 0) {
+      console.log(`[${currentNumber}/${totalTransactions}] Procesando transacciones...`);
+    }
+    
     try {
       if (!transaction.fecha || !transaction.concepto) {
         throw new Error('Fecha y concepto son obligatorios');
       }
 
-      let category;
-      try {
-        const categorization = await categorizeTransaction(transaction.concepto, transaction.importe);
-        category = db.prepare('SELECT nombre, tipo FROM categories WHERE id = ?').get(categorization.category_id);
-      } catch (error) {
-        console.error('Error en categorización:', error);
-        // Si falla la categorización, usar la categoría "Otros"
-        category = db.prepare('SELECT nombre, tipo FROM categories WHERE nombre = ?').get('Otros');
-      }
+      // Usar la categoría ya determinada para este concepto
+      const conceptoKey = transaction.concepto.trim().toLowerCase();
+      const categoryData = conceptCategories.get(conceptoKey);
       
-      if (!category) {
-        console.warn('No se encontró categoría, usando "Otros"');
-        category = { nombre: 'Otros', tipo: transaction.importe > 0 ? 'ingreso' : 'gasto' };
+      let category;
+      if (categoryData) {
+        category = {
+          nombre: categoryData.category_name,
+          tipo: categoryData.category_type
+        };
+      } else {
+        // Fallback si por alguna razón no se encontró la categoría
+        console.warn(`⚠️ No se encontró categoría para "${transaction.concepto}", usando "Otros"`);
+        category = db.prepare('SELECT nombre, tipo FROM categories WHERE nombre = ?').get('Otros');
+        if (!category) {
+          category = { nombre: 'Otros', tipo: transaction.importe > 0 ? 'ingreso' : 'gasto' };
+        }
       }
 
       try {
+        // Obtener el nombre del banco (no el ID)
+        const bancoName = transaction.banco || parseResult.bank || 'Desconocido';
+        
         insertStatement.run(
           transaction.fecha,
           transaction.hora,
@@ -97,7 +233,7 @@ async function processFile(file, bankId, insertStatement, db) {
           transaction.importe,
           transaction.balance,
           category.nombre,
-          transaction.banco || parseResult.bank
+          bancoName // Guardar nombre del banco, no el ID
         );
         importedCount++;
       } catch (error) {
@@ -105,8 +241,7 @@ async function processFile(file, bankId, insertStatement, db) {
         errors.push(`Error en transacción ${transaction.concepto}: ${error.message}`);
       }
 
-      // Pequeña pausa entre transacciones
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // No necesitamos pausa aquí ya que las categorizaciones se hicieron antes
 
     } catch (error) {
       errors.push(`Error en transacción: ${error.message}`);
@@ -114,15 +249,29 @@ async function processFile(file, bankId, insertStatement, db) {
   }
 
   // Resumen final
-  console.log(`\n✅ Importación completada: ${importedCount}/${totalTransactions} transacciones procesadas`);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`✅ IMPORTACIÓN COMPLETADA`);
+  console.log(`${'='.repeat(60)}`);
+  console.log(`📊 Transacciones procesadas: ${importedCount}/${totalTransactions}`);
+  console.log(`📋 Conceptos únicos encontrados: ${uniqueConcepts.size}`);
+  console.log(`✅ Conceptos ya categorizados: ${uniqueConcepts.size - newConcepts.length}`);
+  console.log(`🆕 Conceptos nuevos encontrados: ${newConcepts.length}`);
+  console.log(`🤖 Llamadas a OpenAI realizadas: ${openAICallsCount}`);
   if (errors.length > 0) {
-    console.log(`❌ ${errors.length} errores encontrados`);
+    console.log(`❌ Errores encontrados: ${errors.length}`);
   }
+  console.log(`${'='.repeat(60)}\n`);
 
   return {
     count: importedCount,
     errors: errors.length > 0 ? errors : undefined,
-    bank: parseResult.bank
+    bank: parseResult.bank,
+    stats: {
+      totalTransactions: totalTransactions,
+      uniqueConcepts: uniqueConcepts.size,
+      newConcepts: newConcepts.length,
+      openAICalls: openAICallsCount
+    }
   };
 }
 
@@ -202,11 +351,14 @@ const upload = multer({
  */
 router.get('/banks', (req, res) => {
   try {
-      if (!parserManager) {
+    if (!parserManager) {
       throw new Error('Sistema de parsers no disponible');
     }
 
+    console.log('📋 Solicitando lista de bancos soportados...');
     const banks = parserManager.getSupportedBanks();
+    console.log('✅ Bancos a enviar al frontend:', JSON.stringify(banks, null, 2));
+    
     res.json({ banks });
 
   } catch (error) {
@@ -286,6 +438,92 @@ router.get('/banks', (req, res) => {
  *                 message:
  *                   type: string
  */
+/**
+ * @swagger
+ * /api/upload/detect:
+ *   post:
+ *     summary: Detecta automáticamente el banco de un archivo
+ *     tags: [Upload]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - file
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Banco detectado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 detected:
+ *                   type: boolean
+ *                 bankId:
+ *                   type: string
+ *                 bankName:
+ *                   type: string
+ *                 confidence:
+ *                   type: number
+ *                 reason:
+ *                   type: string
+ */
+router.post('/detect', upload.single('files'), async (req, res) => {
+  try {
+    if (!parserManager) {
+      throw new Error('Sistema de parsers no disponible');
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se proporcionó ningún archivo' });
+    }
+
+    const detection = await parserManager.detectBank(req.file.path);
+
+    // Limpiar archivo temporal
+    if (fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    if (detection.parser) {
+      res.json({
+        detected: true,
+        bankId: detection.parser.getBankId(),
+        bankName: detection.parser.bankName,
+        confidence: detection.confidence,
+        reason: detection.reason,
+        alternatives: detection.alternatives || []
+      });
+    } else {
+      res.json({
+        detected: false,
+        confidence: 0,
+        reason: detection.reason
+      });
+    }
+
+  } catch (error) {
+    console.error('Error detectando banco:', error);
+    
+    // Limpiar archivo temporal si existe
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({ 
+      error: 'Error detectando banco',
+      message: error.message 
+    });
+  }
+});
+
 router.post('/', upload.single('files'), async (req, res) => {
   try {
     if (!parserManager) {
@@ -296,12 +534,22 @@ router.post('/', upload.single('files'), async (req, res) => {
       return res.status(400).json({ error: 'No se proporcionó ningún archivo' });
     }
 
-    const bankId = req.body.bankId;
+    // Si no se proporciona bankId, intentar detectar automáticamente
+    let bankId = req.body.bankId;
+    
     if (!bankId) {
-      return res.status(400).json({ 
-        error: 'Es necesario seleccionar un banco',
-        message: 'Por favor, selecciona el banco correspondiente al archivo'
-      });
+      console.log('🔄 No se especificó banco, intentando detección automática...');
+      const detection = await parserManager.detectBank(req.file.path);
+      
+      if (detection.parser && detection.confidence >= 0.5) {
+        bankId = detection.parser.getBankId();
+        console.log(`✅ Banco detectado automáticamente: ${detection.parser.bankName} (${(detection.confidence * 100).toFixed(1)}% confianza)`);
+      } else {
+        return res.status(400).json({ 
+          error: 'Es necesario seleccionar un banco',
+          message: 'No se pudo detectar el banco automáticamente. Por favor, selecciona el banco manualmente.'
+        });
+      }
     }
 
     const db = getDatabase();

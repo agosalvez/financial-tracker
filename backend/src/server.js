@@ -107,23 +107,38 @@ const PORT = process.env.PORT || 3000;
 // Middleware de seguridad
 app.use(helmet());
 
-// Rate limiting
+// Rate limiting - Configuración más permisiva para desarrollo
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // máximo 100 requests por IP cada 15 minutos
-  message: 'Demasiadas peticiones desde esta IP, intenta de nuevo más tarde.'
+  max: 1000, // máximo 1000 requests por IP cada 15 minutos (más permisivo para desarrollo)
+  message: 'Demasiadas peticiones desde esta IP, intenta de nuevo más tarde.',
+  standardHeaders: true,
+  legacyHeaders: false
 });
 app.use(limiter);
 
-// CORS
+// CORS - Configuración más específica
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:4200',
-  credentials: true
+  origin: [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  optionsSuccessStatus: 200
 }));
 
 // Middleware para parsear JSON
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Middleware de logging para debug
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - Origin: ${req.get('Origin')}`);
+  next();
+});
 
 // Crear directorio de uploads si no existe
 const uploadsDir = path.join(__dirname, '../uploads');

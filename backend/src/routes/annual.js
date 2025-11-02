@@ -8,11 +8,16 @@ router.get('/:year', (req, res) => {
     const db = getDatabase();
     const year = parseInt(req.params.year);
     const currentYear = new Date().getFullYear();
+    const { banco } = req.query; // Filtro opcional por banco
 
     // Validar año
     if (isNaN(year) || year < 2020 || year > currentYear) {
       return res.status(400).json({ error: 'Año inválido' });
     }
+
+    // Construir condición WHERE para banco si se proporciona
+    const bancoCondition = banco && banco.trim() !== '' ? 'AND banco = ?' : '';
+    const bancoParams = banco && banco.trim() !== '' ? [banco.trim()] : [];
 
     // 1. Obtener gastos por categoría
     const gastosPorCategoriaQuery = `
@@ -21,7 +26,7 @@ router.get('/:year', (req, res) => {
           t1.categoria,
           ABS(SUM(t1.importe)) as total
         FROM transactions t1
-        WHERE strftime('%Y', t1.fecha) = ? AND t1.importe < 0
+        WHERE strftime('%Y', t1.fecha) = ? AND t1.importe < 0 ${bancoCondition}
         GROUP BY t1.categoria
       ),
       gastos_${year-1} AS (
@@ -29,7 +34,7 @@ router.get('/:year', (req, res) => {
           t2.categoria,
           ABS(SUM(t2.importe)) as total
         FROM transactions t2
-        WHERE strftime('%Y', t2.fecha) = ? AND t2.importe < 0
+        WHERE strftime('%Y', t2.fecha) = ? AND t2.importe < 0 ${bancoCondition}
         GROUP BY t2.categoria
       )
       SELECT 
@@ -44,8 +49,11 @@ router.get('/:year', (req, res) => {
       ORDER BY g.total DESC
     `;
 
+    const gastosParams = bancoParams.length > 0 
+      ? [year.toString(), ...bancoParams, (year-1).toString(), ...bancoParams]
+      : [year.toString(), (year-1).toString()];
     const gastosPorCategoria = db.prepare(gastosPorCategoriaQuery)
-      .all(year.toString(), (year-1).toString());
+      .all(...gastosParams);
 
     // Calcular porcentajes
     const totalGastos = gastosPorCategoria.reduce((sum, cat) => sum + cat.total, 0);
@@ -54,6 +62,7 @@ router.get('/:year', (req, res) => {
     });
 
     // 2. Obtener evolución mensual
+    const bancoConditionInner = bancoCondition.replace('banco', 't1.banco');
     const evolucionMensualQuery = `
       WITH meses AS (
         SELECT DISTINCT
@@ -63,13 +72,14 @@ router.get('/:year', (req, res) => {
             FROM transactions t1
             WHERE strftime('%Y-%m', t1.fecha) = strftime('%Y-%m', transactions.fecha)
             AND strftime('%d', t1.fecha) <= '23'
+            ${bancoConditionInner}
             ORDER BY fecha DESC, id DESC
             LIMIT 1
           ) as saldo,
           SUM(CASE WHEN importe < 0 THEN ABS(importe) ELSE 0 END) as gastos,
           COUNT(*) as num_transacciones
         FROM transactions
-        WHERE strftime('%Y', fecha) = ?
+        WHERE strftime('%Y', fecha) = ? ${bancoCondition}
         GROUP BY strftime('%Y-%m', fecha)
       )
       SELECT 
@@ -81,8 +91,13 @@ router.get('/:year', (req, res) => {
       ORDER BY mes ASC
     `;
 
+    // Para la consulta de evolución, necesitamos los parámetros en el orden correcto:
+    // Primero para el subquery interno (t1.banco), luego para el WHERE principal
+    const evolucionParams = bancoParams.length > 0 
+      ? [...bancoParams, year.toString(), ...bancoParams]  // banco para subquery, año, banco para WHERE principal
+      : [year.toString()];
     const evolucionMensual = db.prepare(evolucionMensualQuery)
-      .all(year.toString());
+      .all(...evolucionParams);
 
     // Añadir nombres de meses
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 
@@ -102,14 +117,14 @@ router.get('/:year', (req, res) => {
         LEFT JOIN (
           SELECT t2.fecha, SUM(t2.importe) OVER (ORDER BY t2.fecha) as balance
           FROM transactions t2
-          WHERE strftime('%Y', t2.fecha) = ?
+          WHERE strftime('%Y', t2.fecha) = ? ${bancoCondition}
         ) saldo_diario ON date(t1.fecha) = date(saldo_diario.fecha)
-        WHERE strftime('%Y', t1.fecha) = ?
+        WHERE strftime('%Y', t1.fecha) = ? ${bancoCondition}
       ),
       stats_${year-1} AS (
         SELECT SUM(CASE WHEN t3.importe < 0 THEN ABS(t3.importe) ELSE 0 END) as gasto_total
         FROM transactions t3
-        WHERE strftime('%Y', t3.fecha) = ?
+        WHERE strftime('%Y', t3.fecha) = ? ${bancoCondition}
       )
       SELECT 
         s.saldo_promedio,
@@ -119,8 +134,11 @@ router.get('/:year', (req, res) => {
       CROSS JOIN stats_${year-1} sa
     `;
 
+    const resumenParams = bancoParams.length > 0
+      ? [year.toString(), ...bancoParams, year.toString(), ...bancoParams, (year-1).toString(), ...bancoParams]
+      : [year.toString(), year.toString(), (year-1).toString()];
     const resumen = db.prepare(resumenQuery)
-      .get(year.toString(), year.toString(), (year-1).toString());
+      .get(...resumenParams);
 
     // Encontrar mes con máximo y mínimo gasto
     let mesMaxGasto = null;
@@ -143,7 +161,7 @@ router.get('/:year', (req, res) => {
           t1.categoria,
           ABS(SUM(t1.importe)) as total
         FROM transactions t1
-        WHERE strftime('%Y', t1.fecha) = ? AND t1.importe < 0
+        WHERE strftime('%Y', t1.fecha) = ? AND t1.importe < 0 ${bancoCondition}
         GROUP BY t1.categoria
       ),
       categorias_${year-1} AS (
@@ -151,7 +169,7 @@ router.get('/:year', (req, res) => {
           t2.categoria,
           ABS(SUM(t2.importe)) as total
         FROM transactions t2
-        WHERE strftime('%Y', t2.fecha) = ? AND t2.importe < 0
+        WHERE strftime('%Y', t2.fecha) = ? AND t2.importe < 0 ${bancoCondition}
         GROUP BY t2.categoria
       )
       SELECT 
@@ -163,8 +181,11 @@ router.get('/:year', (req, res) => {
       LIMIT 5
     `;
 
+    const comparativaParams = bancoParams.length > 0
+      ? [year.toString(), ...bancoParams, (year-1).toString(), ...bancoParams]
+      : [year.toString(), (year-1).toString()];
     const variacionesCategorias = db.prepare(comparativaQuery)
-      .all(year.toString(), (year-1).toString());
+      .all(...comparativaParams);
 
     // Separar categorías con aumento y reducción
     const categoriasMasAumento = variacionesCategorias

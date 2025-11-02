@@ -5,10 +5,22 @@ export interface Transaction {
   concepto: string;
   importe: number;
   balance: number;
+  saldo?: number; // Alias para balance
   categoria?: string;
+  banco?: string; // Banco/cuenta de la transacción
   notas?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface BankSummary {
+  nombre: string;
+  totalTransacciones: number;
+  totalIngresos: number;
+  totalGastos: number;
+  balance: number;
+  primeraTransaccion: string;
+  ultimaTransaccion: string;
 }
 
 export interface TransactionFilters {
@@ -16,6 +28,7 @@ export interface TransactionFilters {
   fechaHasta?: string;
   concepto?: string;
   categoria?: string;
+  banco?: string; // Filtro por banco/cuenta
   importeMin?: number;
   importeMax?: number;
   page?: string;

@@ -205,7 +205,7 @@ router.post('/', (req, res) => {
 /**
  * @swagger
  * /api/categories/{id}:
- *   patch:
+ *   put:
  *     summary: Actualizar una categoría
  *     description: Actualiza los datos de una categoría existente
  *     tags: [Categorías]
@@ -250,8 +250,13 @@ router.post('/', (req, res) => {
  *       500:
  *         description: Error interno del servidor
  */
-router.patch('/:id', (req, res) => {
+router.put('/:id', (req, res) => {
   try {
+    console.log('=== ACTUALIZANDO CATEGORÍA ===');
+    console.log('ID recibido:', req.params.id);
+    console.log('Body recibido:', req.body);
+    console.log('Headers:', req.headers);
+    
     const db = getDatabase();
     const { id } = req.params;
     const { nombre, tipo, color, icono } = req.body;

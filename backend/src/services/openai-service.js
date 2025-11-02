@@ -1,3 +1,6 @@
+// Cargar variables de entorno desde .env
+require('dotenv').config();
+
 const { OpenAI } = require('openai');
 
 class OpenAIService {

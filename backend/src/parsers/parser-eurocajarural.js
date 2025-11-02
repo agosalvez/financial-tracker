@@ -3,6 +3,7 @@
 
 const csv = require('csv-parser');
 const fs = require('fs');
+const BaseParser = require('./base-parser');
 
 /**
  * Parser para archivos CSV de Eurocaja Rural
@@ -10,12 +11,107 @@ const fs = require('fs');
  * - Fila 10: Fecha de ejecución, Fecha valor, Descripción, Importe, Saldo
  * - Datos desde fila 11 en adelante
  */
-class EurocajaRuralParser {
+class EurocajaRuralParser extends BaseParser {
   constructor() {
+    super('Eurocaja Rural', ['csv']);
     console.log('🏦 Inicializando parser de Eurocaja Rural...');
-    this.bankName = 'Eurocaja Rural';
     this.expectedColumns = ['Fecha de ejecución', 'Fecha valor', 'Descripción', 'Importe', 'Saldo'];
     console.log('✅ Parser de Eurocaja Rural inicializado');
+  }
+
+  /**
+   * Sobrescribe el método para definir la descripción específica
+   * @returns {string}
+   */
+  getDefaultDescription() {
+    return `Parser para archivos CSV de ${this.bankName}`;
+  }
+
+  /**
+   * Detecta si un archivo es de Eurocaja Rural
+   * @param {string} filePath - Ruta del archivo
+   * @returns {Promise<{detected: boolean, confidence: number, reason?: string}>}
+   */
+  async detect(filePath) {
+    try {
+      const fileExtension = filePath.toLowerCase().substring(filePath.lastIndexOf('.'));
+      
+      if (fileExtension !== '.csv') {
+        return { detected: false, confidence: 0, reason: 'Eurocaja Rural solo soporta CSV' };
+      }
+
+      // Leer las primeras líneas del CSV
+      return new Promise((resolve) => {
+        const lines = [];
+        let streamClosed = false;
+        const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+        
+        stream.on('data', (chunk) => {
+          if (!streamClosed) {
+            const newLines = chunk.split('\n');
+            lines.push(...newLines);
+            
+            // Si tenemos suficientes líneas, cerrar el stream
+            if (lines.length >= 15) {
+              streamClosed = true;
+              stream.destroy();
+            }
+          }
+        })
+        .on('end', () => {
+          const result = this.analyzeForEurocajaRural(lines.slice(0, 15));
+          resolve(result);
+        })
+        .on('error', () => {
+          resolve({ detected: false, confidence: 0, reason: 'Error leyendo archivo' });
+        });
+      });
+
+    } catch (error) {
+      return { detected: false, confidence: 0, reason: `Error: ${error.message}` };
+    }
+  }
+
+  /**
+   * Analiza las líneas del CSV para identificar características de Eurocaja Rural
+   * @param {Array<string>} lines - Líneas del archivo CSV
+   * @returns {{detected: boolean, confidence: number, reason?: string}}
+   */
+  analyzeForEurocajaRural(lines) {
+    let score = 0;
+    const reasons = [];
+
+    for (let i = 0; i < Math.min(15, lines.length); i++) {
+      const line = lines[i];
+      const lowerLine = line.toLowerCase();
+
+      // Buscar encabezados característicos de Eurocaja Rural
+      if (line.includes('Fecha de ejecución') && line.includes('Descripción') && line.includes('Importe')) {
+        score += 0.9;
+        reasons.push('Encabezados característicos de Eurocaja Rural encontrados');
+        break;
+      }
+
+      // Buscar menciones de "Eurocaja" o "Rural"
+      if (/eurocaja|rural/.test(lowerLine)) {
+        score += 0.2;
+        reasons.push('Menciones de Eurocaja Rural en el archivo');
+      }
+
+      // Estructura con punto y coma como separador
+      if (line.includes(';') && line.split(';').length >= 5) {
+        score += 0.1;
+      }
+    }
+
+    const detected = score >= 0.5;
+    const confidence = Math.min(score, 1.0);
+
+    return {
+      detected,
+      confidence,
+      reason: detected ? reasons.join('; ') : 'No se encontraron indicadores suficientes de Eurocaja Rural'
+    };
   }
 
   // Se eliminó la detección automática de banco

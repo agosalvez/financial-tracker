@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, map } from 'rxjs';
-import { Transaction, TransactionFilters, SummaryData, Category } from '../models/transaction.model';
+import { Transaction, TransactionFilters, SummaryData, Category, BankSummary } from '../models/transaction.model';
 import { AnnualData } from '../models/annual-data.model';
 
 @Injectable({
@@ -39,16 +39,19 @@ export class TransactionService {
         params = params.set('fechaHasta', filters.fechaHasta);
         console.log('Enviando fechaHasta:', filters.fechaHasta);
       }
-      if (filters.concepto) {
+      if (filters.concepto && filters.concepto.trim() !== '') {
         params = params.set('concepto', filters.concepto);
       }
-      if (filters.categoria) {
+      if (filters.categoria && filters.categoria.trim() !== '') {
         params = params.set('categoria', filters.categoria);
       }
-      if (filters.importeMin) {
+      if (filters.banco && filters.banco.trim() !== '') {
+        params = params.set('banco', filters.banco);
+      }
+      if (filters.importeMin !== undefined && filters.importeMin !== null && !isNaN(filters.importeMin)) {
         params = params.set('importeMin', filters.importeMin.toString());
       }
-      if (filters.importeMax) {
+      if (filters.importeMax !== undefined && filters.importeMax !== null && !isNaN(filters.importeMax)) {
         params = params.set('importeMax', filters.importeMax.toString());
       }
       if (filters.page) {
@@ -83,9 +86,14 @@ export class TransactionService {
 
   // Actualizar categoría de una transacción
   updateTransactionCategory(id: number, categoria: string): Observable<{transaction: Transaction, totalUpdated: number}> {
-    return this.http.patch<{transaction: Transaction, totalUpdated: number}>(`${this.apiUrl}/transactions/${id}`, {
+    return this.http.put<{transaction: Transaction, totalUpdated: number}>(`${this.apiUrl}/transactions/${id}`, {
       categoria
     });
+  }
+
+  // Eliminar una transacción
+  deleteTransaction(id: number): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`${this.apiUrl}/transactions/${id}`);
   }
 
   // Obtener sugerencia de categoría usando IA
@@ -112,6 +120,27 @@ export class TransactionService {
     return this.http.get<{ banks: any[] }>(`${this.apiUrl}/upload/banks`);
   }
 
+  // Detectar banco automáticamente
+  detectBank(file: File): Observable<{
+    detected: boolean;
+    bankId?: string;
+    bankName?: string;
+    confidence?: number;
+    reason?: string;
+    alternatives?: Array<{bank: string, bankId: string, confidence: number}>;
+  }> {
+    const formData = new FormData();
+    formData.append('files', file);
+    return this.http.post<{
+      detected: boolean;
+      bankId?: string;
+      bankName?: string;
+      confidence?: number;
+      reason?: string;
+      alternatives?: Array<{bank: string, bankId: string, confidence: number}>;
+    }>(`${this.apiUrl}/upload/detect`, formData);
+  }
+
   // Subir archivo Excel/CSV
   uploadFile(file: File, bankId?: string): Observable<{ message: string; count: number; bank?: string }> {
     const formData = new FormData();
@@ -129,8 +158,12 @@ export class TransactionService {
   }
 
   // Obtener datos anuales
-  getAnnualData(year: number): Observable<AnnualData> {
-    return this.http.get<AnnualData>(`${this.apiUrl}/annual/${year}`);
+  getAnnualData(year: number, banco?: string): Observable<AnnualData> {
+    let params = new HttpParams();
+    if (banco && banco.trim() !== '') {
+      params = params.set('banco', banco);
+    }
+    return this.http.get<AnnualData>(`${this.apiUrl}/annual/${year}`, { params });
   }
 
   // Obtener resumen de datos
@@ -154,6 +187,11 @@ export class TransactionService {
     return this.http.get<Category[]>(`${this.apiUrl}/categories`);
   }
 
+  // Obtener lista de bancos/cuentas con estadísticas
+  getBanks(): Observable<{ banks: BankSummary[] }> {
+    return this.http.get<{ banks: BankSummary[] }>(`${this.apiUrl}/transactions/banks`);
+  }
+
   // Crear nueva categoría
   createCategory(category: Omit<Category, 'id' | 'created_at'>): Observable<Category> {
     return this.http.post<Category>(`${this.apiUrl}/categories`, category);
@@ -161,7 +199,7 @@ export class TransactionService {
 
   // Actualizar categoría
   updateCategory(id: number, category: Partial<Category>): Observable<Category> {
-    return this.http.patch<Category>(`${this.apiUrl}/categories/${id}`, category);
+    return this.http.put<Category>(`${this.apiUrl}/categories/${id}`, category);
   }
 
   // Eliminar categoría
